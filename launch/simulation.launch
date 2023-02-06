@@ -4,5 +4,5 @@
 	</include>
 
 	<!-- Our node to control the drone -->
-	<node pkg="drone" type="offboard_node.py" name="offboard_node.py" required="true" output="screen" />
+	<node pkg="drone" type="offboard_node.py" name="offboard_node" required="true" output="screen" />
 </launch>

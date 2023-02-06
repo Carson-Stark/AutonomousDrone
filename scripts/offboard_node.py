@@ -2,6 +2,7 @@
 
 import rospy
 from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PointStamped
 from mavros_msgs.msg import State
 from mavros_msgs.srv import CommandBool, CommandBoolRequest, SetMode, SetModeRequest
 
@@ -17,7 +18,7 @@ def position_callback(data):
     global current_position
     current_position = data
 
-def reached_target (target, tolerance=0.1):
+def reached_target (target, tolerance=0.2):
     return abs(current_position.pose.position.x - target.pose.position.x) < tolerance and abs(current_position.pose.position.y - target.pose.position.y) < tolerance \
             and abs(current_position.pose.position.z - target.pose.position.z) < tolerance
 
@@ -42,30 +43,30 @@ if __name__ == "__main__":
     state_sub = rospy.Subscriber("mavros/state", State, callback = state_cb)
     rospy.Subscriber("mavros/local_position/pose", PoseStamped, position_callback)
     global local_pos_pub
-    local_pos_pub = rospy.Publisher("mavros/setpoint_position/local", PoseStamped, queue_size=10)
+    local_pos_pub = rospy.Publisher("move_base_simple/goal", PoseStamped, queue_size=10)
     
 
     # Setpoint publishing MUST be faster than 2Hz
     rate = rospy.Rate(20)
 
     # Wait for Flight Controller connection
-    while not rospy.is_shutdown() and not current_state.connected and not current_state.armed:
-        rate.sleep()
-
+    while rospy.is_shutdown() or not current_state.connected or not current_state.armed:
+        rate.sleep() 
+        
     poseTakeoff = PoseStamped()
     poseTakeoff.pose.position.x = 0
     poseTakeoff.pose.position.y = 0
-    poseTakeoff.pose.position.z = 3
+    poseTakeoff.pose.position.z = 4
 
     poseA = PoseStamped()
-    poseA.pose.position.x = 5
-    poseA.pose.position.y = 0
-    poseA.pose.position.z = 3
+    poseA.pose.position.x = 0
+    poseA.pose.position.y = 10
+    poseA.pose.position.z = 4
 
     poseB = PoseStamped()
-    poseB.pose.position.x = -5
-    poseB.pose.position.y = 0
-    poseB.pose.position.z = 3
+    poseB.pose.position.x = 0
+    poseB.pose.position.y = -10
+    poseB.pose.position.z = 4
 
     # Send a few setpoints before starting
     for i in range(100):   
