@@ -5,9 +5,14 @@ from sensor_msgs.msg import Image
 from std_msgs.msg import Header
 from cv_bridge import CvBridge
 
-def start_capture (width, height, fps):
+width = 1920
+height = 1080
+fps = 30
+
+def start_capture ():
     right_pub = rospy.Publisher('rightcam', Image, queue_size=1)
     left_pub = rospy.Publisher('leftcam', Image, queue_size=1)
+    down_pub = rospy.Publisher('downcam', Image, queue_size=1)
     bridge = CvBridge()
 
     cap = cv2.VideoCapture(f"nvarguscamerasrc ! video/x-raw(memory:NVMM), width=(int){width}, height=(int){height}," + \
@@ -19,24 +24,31 @@ def start_capture (width, height, fps):
 
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 0)
 
-    while not rospy.is_shutdown():
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if ret:
-                front_left = frame[int(height/2.0):height,0:int(width/2.0)]
-                front_right = frame[int(height/2.0):height,int(width/2.0):width]
-                front_left_msg = bridge.cv2_to_imgmsg(front_left, "bgr8")
-                front_right_msg = bridge.cv2_to_imgmsg(front_right, "bgr8")
+    while cap.isOpened() and not rospy.is_shutdown():
+        ret, frame = cap.read()
+        if ret:
+            front_left = frame[int(height/2.0):height,0:int(width/2.0)]
+            front_right = frame[int(height/2.0):height,int(width/2.0):width]
+            down_left = frame[:int(height/2.0),0:int(width/2.0)]
+            front_left_msg = bridge.cv2_to_imgmsg(front_left, "bgr8")
+            front_right_msg = bridge.cv2_to_imgmsg(front_right, "bgr8")
+            down_left_msg = bridge.cv2_to_imgmsg(down_left, "bgr8")
 
-                left_pub.publish(front_left_msg)
-                right_pub.publish(front_right_msg)
-            else:
-                break
+            left_pub.publish(front_left_msg)
+            right_pub.publish(front_right_msg)
+            down_pub.publish(down_left_msg)
+
+            cv2.waitKey(10)
+
+        else:
+            break
+    
+    cap.release()
 
 if __name__ == '__main__':
     rospy.init_node('camera_node', anonymous=True)
     rospy.loginfo("camera node started")
     try:
-        start_capture(1920, 1080, 30)
+        start_capture()
     except rospy.ROSInterruptException:
         pass
