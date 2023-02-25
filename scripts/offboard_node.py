@@ -13,6 +13,7 @@ current_state = State()
 def state_cb(msg):
     global current_state
     current_state = msg
+    RecordTrigger.armed = current_state.armed
 
 def position_callback(data):
     global current_position
@@ -119,8 +120,8 @@ if __name__ == "__main__":
     # Setpoint publishing MUST be faster than 2Hz
     rate = rospy.Rate(20)
 
-    # Wait for Flight Controller connection
-    while rospy.is_shutdown() or not current_state.connected or not current_state.armed:
+    # Wait for Flight Controller connection and arm
+    while rospy.is_shutdown() or not current_state.connected:
         rate.sleep() 
         
     poseTakeoff = PoseStamped()
@@ -136,9 +137,12 @@ if __name__ == "__main__":
         goal_pub.publish(poseTakeoff)
         rate.sleep()
 
-    while not rospy.is_shutdown() and current_state.armed:
-
-        if current_state.mode == "OFFBOARD":
+    while not rospy.is_shutdown() and current_state.connected:
+        
+        if not current_state.armed:
+            goal_pub.publish(poseTakeoff)
+            rate.sleep()
+        elif current_state.mode == "OFFBOARD":
             spiral(poseTakeoff, 4, 3, 10, rate)
             land_on_object ((5, 5, 0), rate)
             break

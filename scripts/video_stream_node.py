@@ -8,7 +8,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import subprocess
 
-fps = 10
+fps = 5
 width = 480
 height = 270
 
@@ -26,7 +26,7 @@ def start_node():
     
     global out
     out = cv2.VideoWriter(f'appsrc ! videoconvert' + \
-    ' ! x264enc speed-preset=ultrafast bitrate=3000' + \
+    ' ! x264enc speed-preset=ultrafast' + \
     ' ! rtspclientsink location=rtsp://localhost:8554/mystream',
     cv2.CAP_GSTREAMER, 0, fps, (width, height), True)
     if not out.isOpened():
@@ -39,12 +39,12 @@ def start_node():
     cv2.destroyAllWindows()
 
 def recieve_frame(img):
-    cam_img = cv2.resize (bridge.imgmsg_to_cv2(img), (480, 270))
+    cam_img = cv2.resize (bridge.imgmsg_to_cv2(img), (width, height))
     out.write(cam_img)
 
 
 if __name__ == '__main__':
-    rospy.init_node('data_stream_node', anonymous=True)
+    rospy.init_node('video_stream_node', anonymous=True)
     rospy.loginfo("data stream node started")
 
     try:

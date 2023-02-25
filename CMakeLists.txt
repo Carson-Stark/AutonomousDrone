@@ -113,7 +113,7 @@ catkin_install_python(PROGRAMS scripts/camera_node.py
   DESTINATION $(CATKIN_PACKAGE_BIN_DESTINATION)
 )
 
-catkin_install_python(PROGRAMS scripts/data_stream_node.py
+catkin_install_python(PROGRAMS scripts/video_stream_node.py
   DESTINATION $(CATKIN_PACKAGE_BIN_DESTINATION)
 )
 
@@ -121,6 +121,9 @@ catkin_install_python(PROGRAMS scripts/offboard_node.py
   DESTINATION $(CATKIN_PACKAGE_BIN_DESTINATION)
 )
 
+catkin_install_python(PROGRAMS scripts/recording_node.py
+  DESTINATION $(CATKIN_PACKAGE_BIN_DESTINATION)
+)
 
 
 ###########

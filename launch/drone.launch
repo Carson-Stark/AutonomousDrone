@@ -2,18 +2,10 @@
     <node name='start_telemetry_fowarding' pkg="drone" type="start_telemetry_fowarding.sh" output='screen'/>
     <node pkg='drone' type='camera_node.py' name='camera_node' output='screen'></node>
     <node pkg='drone' type='depth_sensor_node.py' name='depth_sensor_node' output='screen'></node>
-    <node pkg='drone' type='data_stream_node.py' name='data_stream_node' output='screen'></node>
-    <!-- <node pkg='disparity_to_point_cloud' type='disparity_to_point_cloud_node' name='disparity_to_point_cloud_node' output='screen'>
-        <rosparam>
-            fx_: 1.64
-            fy_: 1.64 
-            cx_: 120 
-            cy_: 68
-            base_line_: 0.23
-            disparity: "disparity"
-        </rosparam>
-    </node> -->
+    <node pkg='drone' type='video_stream_node.py' name='video_stream_node' output='screen'></node>
     <include file="$(find local_planner)/launch/local_planner_cv.launch">
         <arg name = "fcu_url" value = "udp://127.0.01:14540@"/>
     </include>
+    <node pkg='drone' type='offboard_node.py' name='offboard_node' output='screen'></node>
+    <node pkg='drone' type='recording_node.py' name='recording_node' output='screen' cwd="node"></node>
 </launch>
