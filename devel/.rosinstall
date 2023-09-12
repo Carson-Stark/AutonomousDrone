@@ -1,0 +1,2 @@
+- setup-file:
+    local-name: /home/greta/catkin_ws/src/drone/devel/setup.sh

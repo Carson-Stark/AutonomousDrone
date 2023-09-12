@@ -1,0 +1,8 @@
+prefix=/home/greta/catkin_ws/src/drone/devel
+
+Name: drone
+Description: Description of drone
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

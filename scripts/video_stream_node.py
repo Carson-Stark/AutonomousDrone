@@ -19,18 +19,18 @@ def start_node():
     print (map_file_path)
     cv_file.open(str(map_file_path), cv2.FileStorage_READ)
 
-    rospy.Subscriber('leftcam', Image, recieve_frame)
-
     global bridge
     bridge = CvBridge()
     
     global out
     out = cv2.VideoWriter(f'appsrc ! videoconvert' + \
     ' ! x264enc speed-preset=ultrafast' + \
-    ' ! rtspclientsink location=rtsp://localhost:8554/mystream',
+    ' ! rtspclientsink location=rtsp://172.25.20.179:8554/mystream',
     cv2.CAP_GSTREAMER, 0, fps, (width, height), True)
     if not out.isOpened():
         raise Exception("can't open video writer")
+    
+    rospy.Subscriber('/front/color/image_raw', Image, recieve_frame)
 
     rospy.loginfo("serving image to RTSP server...")
 
@@ -40,12 +40,13 @@ def start_node():
 
 def recieve_frame(img):
     cam_img = cv2.resize (bridge.imgmsg_to_cv2(img), (width, height))
+    cam_img = cv2.cvtColor(cam_img, cv2.COLOR_RGB2BGR)
     out.write(cam_img)
 
 
 if __name__ == '__main__':
     rospy.init_node('video_stream_node', anonymous=True)
-    rospy.loginfo("data stream node started")
+    rospy.loginfo("video stream node started")
 
     try:
         start_node()
