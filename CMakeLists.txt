@@ -109,20 +109,13 @@ catkin_package(
 #  DEPENDS system_lib
 )
 
-
-catkin_install_python(PROGRAMS scripts/camera_node.py
-  DESTINATION $(CATKIN_PACKAGE_BIN_DESTINATION)
-)
-
-catkin_install_python(PROGRAMS scripts/video_stream_node.py
-  DESTINATION $(CATKIN_PACKAGE_BIN_DESTINATION)
-)
-
-catkin_install_python(PROGRAMS scripts/offboard_node.py
-  DESTINATION $(CATKIN_PACKAGE_BIN_DESTINATION)
-)
-
-catkin_install_python(PROGRAMS scripts/depth_node.py
+catkin_install_python(PROGRAMS
+  scripts/depth_node.py
+  scripts/offboard_node.py
+  scripts/video_stream_node.py
+  scripts/camera_node.py
+  scripts/tcp_server.py
+  scripts/camera_test.py
   DESTINATION $(CATKIN_PACKAGE_BIN_DESTINATION)
 )
 

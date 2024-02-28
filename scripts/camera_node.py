@@ -13,14 +13,10 @@ from mavros_msgs.msg import State
 from threading import Thread
 import datetime
 import os
-import pyrealsense2 as rs
 import numpy as np
 
 import subprocess, shlex, psutil
 import time
-
-from BlobDetection import BlobDetection
-from ObjectDetection import ObjectDetection
 
 armed = State()
 
@@ -45,7 +41,7 @@ class CamCapture:
     def start_recoding(self):
         print ("start recording")
         timestamp = datetime.datetime.now()
-        path = os.path.expanduser(f'~/Desktop/Flight Recordings/recording{timestamp}.mp4')
+        path = os.path.expanduser(f'~/Desktop/FlightRecordings/recording{timestamp}.mp4')
         self.writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*'XVID'), self.fps, (int(self.width), self.height))
         self.recording = True
         Thread(target=self.record, args=(), daemon=True).start()
@@ -63,14 +59,15 @@ class CamCapture:
 
         self.writer.release()
 
+count = 0
 def image_frame_callback(fc, fd, dc, dd):
     fc_img = cv2.cvtColor(bridge.imgmsg_to_cv2(fc), cv2.COLOR_RGB2BGR)
     fd_img = bridge.imgmsg_to_cv2(fd)
-    fd_8bit = cv2.convertScaleAbs(fd_img, alpha=(255.0 / max(6000, fd_img.max())))
+    fd_8bit = cv2.convertScaleAbs(fd_img, alpha=255.0 / 8000)
     fd_img = cv2.cvtColor(cv2.applyColorMap(fd_8bit, cv2.COLORMAP_JET), cv2.COLOR_RGB2BGR)
     dc_img = cv2.cvtColor(bridge.imgmsg_to_cv2(dc), cv2.COLOR_RGB2BGR)
     dd_img = bridge.imgmsg_to_cv2(dd)
-    dd_8bit = cv2.convertScaleAbs(dd_img, alpha=(255.0 / max(6000, dd_img.max())))
+    dd_8bit = cv2.convertScaleAbs(dd_img, alpha=255.0 / 8000)
     dd_img = cv2.cvtColor(cv2.applyColorMap(dd_8bit, cv2.COLORMAP_JET), cv2.COLOR_RGB2BGR)
 
     global frame
@@ -78,8 +75,15 @@ def image_frame_callback(fc, fd, dc, dd):
     down = np.concatenate((dc_img, dd_img), axis=0)
     frame = np.concatenate((front, down), axis=1)
     frame = cv2.resize(frame, (1920, 1080), interpolation= cv2.INTER_LINEAR)
-    #cv2.imshow("frame",frame)
-    #cv2.waitKey(20)
+
+    global count
+    if count == 0:
+        cap.start_recoding()
+    elif count == 150:
+        cap.stop_recording()
+    count += 1
+
+    #detector.detectWhite(front, 10000)
 
 def start_node():
     global bridge
@@ -89,11 +93,14 @@ def start_node():
     front_depth = message_filters.Subscriber("front/depth/image_rect_raw", Image)
     down_color = message_filters.Subscriber("down/color/image_raw", Image)
     down_depth = message_filters.Subscriber("down/depth/image_rect_raw", Image)
-    ts = message_filters.ApproximateTimeSynchronizer([front_color, front_depth, down_color, down_depth], queue_size=1, slop=0.1)
+    ts = message_filters.ApproximateTimeSynchronizer([front_color, front_depth, down_color, down_depth], queue_size=5, slop=0.1)
     ts.registerCallback(image_frame_callback)
 
+    #global detector
+    #detector = BlobDetection()
+
     global cap
-    cap = CamCapture(1920, 1080, 15)
+    cap = CamCapture(1920, 1080, 10)
     rospy.spin()
 
 if __name__ == '__main__':

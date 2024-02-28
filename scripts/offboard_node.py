@@ -3,141 +3,45 @@
 import rospy
 from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import Bool
-from BlobDetection import BlobDetection
+from geometry_msgs.msg import Point
+from ObjectDetection import find_bag
+from BlobDetection import detectWhite
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
-from dronekit import connect, VehicleMode, mavutil, LocationGlobalRelative, Command
+from dronekit import connect, VehicleMode, mavutil, LocationGlobal, LocationGlobalRelative, Command, SystemStatus
 import time
 import math
 from drone.srv import Coordinates
 import pyrealsense2 as rs2
+import offboard_utils
+from mission_utils import MissionItem, CommandType, add_search_waypoints
+from std_msgs.msg import String
+from datetime import datetime
 
 vehicle = None
-
-def takeoff(targetAltitude):
-    """
-    Arms vehicle and fly to aTargetAltitude.
-    """
-
-    print ("Taking off!")
-    vehicle.simple_takeoff(targetAltitude) # Take off to target altitude
-
-    # Wait until the vehicle reaches a safe height
-    while vehicle.armed:
-        print (" Altitude: " + str(vehicle.location.global_relative_frame.alt))
-        #Break and return from function just below target altitude.
-        if vehicle.location.global_relative_frame.alt>=targetAltitude*0.95:
-            print ("Reached target altitude")
-            break
-        time.sleep(0.5)
-
-# velocity_x > 0 => fly foward
-# velocity_x < 0 => fly backward
-# velocity_y > 0 => fly right
-# velocity_y < 0 => fly left
-# velocity_z < 0 => ascend
-# velocity_z > 0 => descend
-def send_frame_velocity(velocity_x, velocity_y, velocity_z, yaw):
-    """
-    Move vehicle in direction based on specified velocity vectors.
-    """
-    msg = vehicle.message_factory.set_position_target_local_ned_encode(
-        0,       # time_boot_ms (not used)
-        0, 0,    # target system, target component
-        mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED, # frame
-        0b0000111111000111, # type_mask (only speeds enabled)
-        0, 0, 0, # x, y, z positions (not used)
-        velocity_x, velocity_y, velocity_z, # x, y, z velocity in m/s
-        0, 0, 0, # x, y, z acceleration (not supported yet, ignored in GCS_Mavlink)
-        0, 0)    # yaw, yaw_rate (not supported yet, ignored in GCS_Mavlink)
-
-    vehicle.send_mavlink(msg)
-    set_yaw(yaw)
-
-def brake_for(seconds, yaw):
-    sleep_increment = 0.5
-    count = 0
-    while count < seconds:
-        msg = vehicle.message_factory.set_position_target_local_ned_encode(
-            0,       # time_boot_ms (not used)
-            0, 0,    # target system, target component
-            mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED, # frame
-            0b0000111111000111, # type_mask (only speeds enabled)
-            0, 0, 0, # x, y, z positions (not used)
-            0, 0, 0, # x, y, z velocity in m/s
-            0, 0, 0, # x, y, z acceleration (not supported yet, ignored in GCS_Mavlink)
-            0, 0)    # yaw, yaw_rate (not supported yet, ignored in GCS_Mavlink)
-
-        vehicle.send_mavlink(msg)
-        set_yaw(yaw)
-        time.sleep(sleep_increment)
-        count += sleep_increment
-
-def set_yaw(heading):
-    """
-    By default the yaw of the vehicle will follow the direction of travel. After setting 
-    the yaw using this function there is no way to return to the default yaw "follow direction 
-    of travel" behaviour (https://github.com/diydrones/ardupilot/issues/2427)
-    """
-    # create the CONDITION_YAW command using command_long_encode()
-    msg = vehicle.message_factory.command_long_encode(
-        0, 0,    # target system, target component
-        mavutil.mavlink.MAV_CMD_CONDITION_YAW, #command
-        0, #confirmation
-        heading,    # param 1, yaw in degrees
-        0,          # param 2, yaw speed deg/s
-        1,          # param 3, direction -1 ccw, 1 cw
-        0, # param 4, relative offset 1, absolute angle 0
-        0, 0, 0)    # param 5 ~ 7 not used
-    
-    # send command to vehicle
-    vehicle.send_mavlink(msg)
-
-def set_gripper(closed):
-	msg = vehicle.message_factory.command_long_encode(
-		0, 0, 
-		mavutil.mavlink.MAV_CMD_DO_GRIPPER,
-		0,
-		1, #servo number
-		1 if closed else 0, #open/closes
-		0,0,0,0,0
-		)
-	vehicle.send_mavlink(msg)
-
-def distance_meters(target):
-    return (abs(vehicle.location.global_relative_frame.lat - target.lat) * 111139, abs(vehicle.location.global_relative_frame.lon - target.lon) * 111139) 
-
-def fly_to_target(rate, target, timeout, tolerance=0.5):
-    vehicle.simple_goto(vehicle.location.global_relative_frame)
-
-    cmds = vehicle.commands
-    cmds.clear()
-    cmd1=Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0, 0, 0, 0, target.lat, target.lon, target.alt)
-    cmds.add(cmd1)
-    vehicle.airspeed = 1
-    print("uploading...")
-    cmds.upload() # Send commands
-    while vehicle.mode != VehicleMode("AUTO"):
-        rate.sleep()
-        vehicle.mode = VehicleMode("AUTO")
-        print("trying to switch to auto")
-
-    start_time = time.time()
-    dist = distance_meters(target)
-    while vehicle.mode == VehicleMode("GUIDED") and time.time() - start_time < timeout and dist[0] > tolerance or dist[1] > tolerance:
-        print(str(dist))
-        rate.sleep()
-
-    print("reached target")
-    vehicle.mode = VehicleMode("GUIDED")
+front_depth = None
+down_frame = None
+down_depth = None
+cameraInfo = None
+last_frame_update = 0
         
-
 def check_for_bag (frame):
-    #detections = object_detector.detect(frame)
+    if vehicle == None or frame is None:
+        print("no frame")
+        return None
+    if time.time() - last_frame_update > 1:
+        print("time since last frame " + str(time.time() - last_frame_update))
+        return None
+
     alt = vehicle.location.global_relative_frame.alt
-    pixel_size = world_to_pixel((0.5, 0.5, alt)) #max pixel size of bag
-    detection = object_detector.detectWhite(frame, pixel_size[0] * pixel_size[1])
+    pixel_size = offboard_utils.world_to_pixel((0.5, 0.5, alt), cameraInfo) #max pixel size of bag
+    detection = None
+    if vehicle.rangefinder.distance < 0.8:
+        detection = detectWhite(frame, pixel_size[0] * pixel_size[1])
+    
+    detection = find_bag(frame)
+
     return detection
 
     """best = None
@@ -153,20 +57,30 @@ def get_bag_image_coords ():
     if detection == None:
         return None
     
-    pixel_offsets = get_offsets()
-    if detection[2][0] + int(detection[2][2]/2) > down_frame.shape[1] / 2:
-        centered_pixel_x = float(detection[2][0] + int(detection[2][2]/4)) - (down_frame.shape[1] / 2)
+    pixel_offsets = offboard_utils.get_offsets(vehicle, down_frame, cameraInfo)
+    #print(down_frame.shape)
+    #print(detection)
+    x0, x1, y0, y1 = detection
+    width = x1 - x0
+    height = y1 - y0
+    centerx = (x0 + x1) // 2 - (down_frame.shape[1] / 2)
+    centery = (y0 + y1) // 2 - (down_frame.shape[0] / 2)
+    #print (f"{centerx} {centery} {width} {height}")
+    if centerx > 0:
+        centered_x = x0 + (width // 4)  - (down_frame.shape[1] / 2)
     else:
-        centered_pixel_x = float(detection[2][0] + int(detection[2][2] * 0.75)) - (down_frame.shape[1] / 2)
-    if detection[2][1] + int(detection[2][3]/2) > down_frame.shape[0] / 2:
-        centered_pixel_y = float(detection[2][1] + int(detection[2][3]/4)) - (down_frame.shape[0] / 2)
+        centered_x = x0 + (width // 4 * 3)  - (down_frame.shape[1] / 2)
+    if centery > 0:
+        centered_y = y0 + (height // 4)  - (down_frame.shape[0] / 2)
     else:
-        centered_pixel_y = float(detection[2][1] + int(detection[2][3] * 0.75)) - (down_frame.shape[0] / 2)
-    coordinates = ((centered_pixel_x + pixel_offsets[0]) / down_frame.shape[1], \
-                   (centered_pixel_y + pixel_offsets[1]) / -down_frame.shape[0])
-    pixel_x = float(detection[2][0] + int(detection[2][2]/2)) + pixel_offsets[0]
-    pixel_y = float(detection[2][1] + int(detection[2][3]/2)) + pixel_offsets[1]
-    return (coordinates, (centered_pixel_x + (down_frame.shape[1] / 2), centered_pixel_y + (down_frame.shape[0] / 2)))
+        centered_y = y0 + (height // 4 * 3)  - (down_frame.shape[0] / 2)
+    #centered_y = y1 - down_frame.shape[0] / 2
+
+    coordinates = ((centered_x + pixel_offsets[0]) / down_frame.shape[1], \
+                   (centered_y + pixel_offsets[1]) / -down_frame.shape[0])
+    pixel_x = centerx + pixel_offsets[0]
+    pixel_y = centery + pixel_offsets[1]
+    return (coordinates, (pixel_x, pixel_y))
 
 def search_for_bag (rate):
     vehicle.simple_goto(vehicle.location.global_frame)
@@ -175,35 +89,6 @@ def search_for_bag (rate):
             land_on_object(rate)
         rate.sleep()
 
-def sign(num):
-    return 1 if num > 0 else -1
-
-#account for roll and pitch in image coordinates
-def get_offsets():
-    roll = vehicle.attitude.roll
-    pitch = vehicle.attitude.pitch
-
-    alt = vehicle.location.global_relative_frame.alt
-    if alt > 4:
-        return (0, 0)
-    
-    # Calculate offsets using trigonometry
-    horizontal_offset = alt * math.tan(roll)
-    vertical_offset = alt * math.tan(pitch)
-
-    pixel_coord = world_to_pixel((horizontal_offset, vertical_offset, alt))
-    return (-(pixel_coord[0] - (down_frame.shape[1] / 2)), -(pixel_coord[1] - (down_frame.shape[0] / 2)))
-
-#(X = right, Y = foward)
-def rotate_to_global (local_target):
-    yaw = -vehicle.attitude.yaw
-
-    x = math.cos(yaw) * local_target[0] + math.sin(yaw) * local_target[1]
-    y = math.sin(yaw) * -local_target[0] + math.cos(yaw) * local_target[1]
-    
-    return (x, y)
-
-
 def estimate_velocity(obj_pos_history):
     if len(obj_pos_history) <= 5:
         return
@@ -211,22 +96,81 @@ def estimate_velocity(obj_pos_history):
     pos1 = obj_pos_history[-5]
     pos2 = obj_pos_history[-1] #skip one frame
 
+    #don't estimate velocity if turning
     if math.degrees(abs(pos1[3] - pos2[3])) > 5:
         return
 
     time_diff = pos2[4] - pos1[4]
-    velocity_vector = ((pos2[0] - pos1[0]) / -time_diff, (pos2[1] - pos1[1]) / time_diff, (pos2[2] - pos1[2]) / time_diff)
+    velocity_vector = ((pos2[0] - pos1[0]) / time_diff, (pos2[1] - pos1[1]) / time_diff, (pos2[2] - pos1[2]) / time_diff)
 
+    print("Estimated: " + str((velocity_vector[1], velocity_vector[0], velocity_vector[2])))
+    print("True: " + str(vehicle.velocity))
     msg = vehicle.message_factory.vision_speed_estimate_encode(
         0, #time boot
         velocity_vector[1], velocity_vector[0], velocity_vector[2],
         [float("NAN"), 0, 0, 0, 0, 0, 0, 0, 0], #covariance
         0, # reset counter
     )
-    vehicle.send_mavlink(msg)
+    #vehicle.send_mavlink(msg)
 
     return velocity_vector
 
+def check_obstacles(min_dist):
+    if vehicle.location.global_relative_frame.alt < 1:
+        return False
+
+    for c in range(100, front_depth.shape[1] - 100, 20):
+        count = 0
+        for r in range(100, front_depth.shape[0] - 100, 10):
+            dist_m = front_depth[r, c] * 0.001
+            if dist_m != 0 and dist_m < min_dist:
+                count += 1
+        if count > 3:
+            return True
+
+    return False
+
+def check_downward_obs(min_dis=3):
+    if vehicle.location.global_relative_frame.alt < min_dis * 1.4:
+        return -1
+
+    top = 0
+    right = 0
+    bottom = 0
+    left = 0
+    obstacle = False
+    for r in range(0, down_depth.shape[0])[::20]:
+        count = 0
+        for c in range(0, down_depth.shape[1])[::10]:
+            depth = down_depth[r][c] * 0.001
+            if depth == 0:
+                depth = 10
+            elif depth < min_dis and depth > 0.8 and depth != 0:
+                count += 1
+
+            if r < down_depth.shape[0] * 0.33:
+                top += depth
+            if c > down_depth.shape[1] * 0.66:
+                right += depth
+            if r > down_depth.shape[0] * 0.66:
+                bottom += depth
+            if c < down_depth.shape[1] * 0.33:
+                left += depth
+        if count > 3:
+            obstacle = True
+
+    if not obstacle:
+        return -1
+
+    top = top / (down_depth.shape[0] * down_depth.shape[1]) / 100
+    right = right / (down_depth.shape[0] * down_depth.shape[1]) / 100
+    bottom = bottom / (down_depth.shape[0] * down_depth.shape[1]) / 100
+    left = left / (down_depth.shape[0] * down_depth.shape[1]) / 100
+
+    directions = [top, right, bottom, left]
+    best_dir = np.argmin(directions)
+    
+    return best_dir
 
 def check_safe_landing(num_bins=5, bin_size=50):
     bins = [0] * (num_bins * num_bins)
@@ -245,14 +189,47 @@ def check_safe_landing(num_bins=5, bin_size=50):
     avg_depth = sum(bins) / len(bins)
     print(avg_depth)
     avg_deviation = sum(abs(d - avg_depth) for d in bins) / len(bins)
-    print(("SAFE: " if avg_deviation < 0.05 else "UNSAFE: ") + str(avg_deviation))
-    return avg_deviation < 0.05
+    print(("SAFE: " if avg_deviation < 0.1 else "UNSAFE: ") + str(avg_deviation))
+    return avg_deviation < 0.1
 
+
+def try_land(rate):
+    yaw = vehicle.attitude.yaw
+    while check_safe_landing():
+        print("trying safe landing")
+        alt = vehicle.rangefinder.distance
+        offboard_utils.send_frame_velocity(vehicle, 0, 0, 1, yaw)
+        if alt < 1.5:
+            vehicle.mode = VehicleMode("LAND")
+            return True
+        rate.sleep()
+    return False
+
+def check_for_payload():    
+    close_points = 0
+    for r in range(0, down_depth.shape[0], 10):
+        for c in range(0, down_depth.shape[1], 10):
+            depth = down_depth[r][c] * 0.001
+            if depth < 0.5 and depth != 0:
+                close_points += 1
+
+    print (close_points)
+    return close_points > 25
+
+def clamp(n, mag): 
+    if n < -mag: 
+        return -mag
+    elif n > mag: 
+        return mag
+    else: 
+        return n
 
 def land_on_object(rate):
 
     yaw = vehicle.attitude.yaw
     start_pos = vehicle.location.global_frame
+    start_alt = vehicle.rangefinder.distance
+    relative_coordinates = None
 
     print ("landing on object")
     tolerance = 0.25
@@ -260,190 +237,553 @@ def land_on_object(rate):
     def within_tolerance(multiplier=1):
         return abs(relative_coordinates[0]) < tolerance * multiplier and abs(relative_coordinates[1]) < tolerance * multiplier
 
-    pos_buffer = []
+    pos_buff = []
 
     #center bag and maintain altitude
     final_descent = False
-    final_descent_height = 0.5
+    final_descent_height = 0.6
     centered_frames = 0
     centered = False
-    while not final_descent and vehicle.armed:
+    lost_for = 0
+    while not final_descent and in_autonomous_mode():
+        alt = vehicle.rangefinder.distance
         object_coordinates = get_bag_image_coords()
         if object_coordinates == None:
             print("target lost")
-            send_frame_velocity(0, 0, -0.3, yaw)
+            lost_for += 1
+            if lost_for > 2:
+                offboard_utils.send_frame_velocity(vehicle, 0, 0, -0.2, yaw)
+                centered_frames = 0
+            if alt > start_alt + 0.5 or lost_for > 10:
+                break
             #vehicle.airspeed = 1
             #vehicle.simple_goto(start_pos)
             rate.sleep()
             continue
 
-        target_lost = False
-        alt = vehicle.rangefinder.distance
+        lost_for = 0
 
         pixel_coordinates = object_coordinates[1]
         relative_coordinates = object_coordinates[0]
-        #if alt < 1:
-            #relative_coordinates = (relative_coordinates[0] - 0.2, relative_coordinates[1] + 0.2)
-        local_coordinates = pixel_to_world((pixel_coordinates[0], pixel_coordinates[1], alt))
-        world_coordinates = rotate_to_global((local_coordinates[0], local_coordinates[1]))
+        local_coordinates = offboard_utils.pixel_to_world((pixel_coordinates[0], pixel_coordinates[1], alt), cameraInfo)
+        world_coordinates = offboard_utils.rotate_to_global(vehicle, (local_coordinates[0], local_coordinates[1]))
         pos_buff.append((world_coordinates[0], world_coordinates[1], alt, vehicle.attitude.yaw, time.time()))
         if len(pos_buff) > 6:
             pos_buff.pop(0)
         estimate_velocity(pos_buff)
 
-        if within_tolerance() and centered_frames >= 8:
-            if not centered and alt > 2:
-                #brake_for(1, yaw)
-                centered = True
-            if alt < final_descent_height:
-                final_descent = True
-                print ("final descent")
-                break
+        if (within_tolerance() and alt < final_descent_height and centered_frames >= 3) or alt < 0.4:
+            final_descent = True
+            print ("final descent")
+            break
 
-        adjustment_speed = max (1, min(2, alt / 2))
+        adjustment_speed = 1 if alt > 1.5 else 0.75
+        if within_tolerance(0.5):
+            adjustment_speed = 0
+
+        max = 0.5
+
+        descent_speed = 0.3 if alt > 1 else 0.2
+        if alt < final_descent_height:
+            descent_speed = 0
+        if alt < final_descent_height * 0.8:
+            descent_speed = -0.2
+
+        x_speed = clamp(relative_coordinates[0] * adjustment_speed, max)
+        y_speed = clamp(relative_coordinates[1] * adjustment_speed, max)
 
         if not within_tolerance():
             centered_frames = 0
             centered = False
-            print ("uncentered: " + str(alt) + " " + str(object_coordinates))
-            send_frame_velocity (relative_coordinates[1] * adjustment_speed, relative_coordinates[0] * adjustment_speed, -0.2 if alt < final_descent_height else 0, yaw)
+            print ("uncentered: " + str(alt) + " " + str(relative_coordinates))
+            offboard_utils.send_frame_velocity (vehicle, y_speed, x_speed, -0.2 if alt < 1 else 0, yaw)
         else:
+
+            #if alt < final_descent_height:
             centered_frames += 1
-            print ("centered: " + str(alt) + " " + str(object_coordinates))
-            send_frame_velocity (relative_coordinates[1] * adjustment_speed, relative_coordinates[0] * adjustment_speed, 0.2 if alt > 2 else (0.1 if alt > final_descent_height * 0.8 else -0.2), yaw)
+
+            print ("centered: " + str(alt) + " " + str(relative_coordinates))
+            offboard_utils.send_frame_velocity (vehicle, y_speed, x_speed, descent_speed, yaw)
 
         rate.sleep()
 
     if not final_descent:
         print ("landing attempt failed")
         vehicle.airspeed = 1
-        #vehicle.simple_goto(start_pos)
+        vehicle.simple_goto(start_pos)
+        return False
+
+    offboard_utils.set_gripper(vehicle, False)
+    offboard_utils.send_velocity_for(vehicle, 0.2, 0, 0, 0.5)
+    offboard_utils.send_velocity_for(vehicle, 0, 0, 1, 4)
+    vehicle.mode = VehicleMode("LAND")
+    time.sleep(5)
+    offboard_utils.set_gripper(vehicle, True)
+    time.sleep(2)
+    vehicle.mode = VehicleMode("GUIDED")
+    time.sleep(2)
+    return True 
+
+started_mission = False
+def bag_mission(target):
+    x, y = target
+
+    mission_alt = 20
+    search_alt = 5
+    print ("Starting bag pickup mission")
+
+    cmds = []
+    launch_pos = vehicle.location.global_relative_frame
+
+    target = LocationGlobalRelative(x, y, mission_alt)
+    distxy = offboard_utils.distance_meters(vehicle, target)
+    dist = math.sqrt(pow(distxy[0], 2) + pow(distxy[1], 2))
+    log(f"Target is {dist}m  meters away\n")
+    if dist > 1000:
+        log("Target is too far away, aborting mission")
+        return
+    
+    if not vehicle.is_armable:
+        log("Not armable, aborting mission")
         return
 
-    set_gripper(False)
-    count = 0
-    while count < 6:
-        send_frame_velocity (0, 0, 0.3, yaw)
-        time.sleep(0.5)
-        count += 1
-    set_gripper(True)
+    if time.time() - last_frame_update > 1:
+        log("Camera frame not being updated")
+        return
 
-    vehicle.armed = False
+    home = LocationGlobalRelative(launch_pos.lat, launch_pos.lon, mission_alt)
+    cmds.append(MissionItem(CommandType.TAKEOFF, mission_alt, "Takeoff to mission altitude"))
+    cmds.append(MissionItem(CommandType.WAYPOINT, home, "Start"))
+    cmds.append(MissionItem(CommandType.WAYPOINT, target, "Fly to bag"))
+    target_search = LocationGlobalRelative(x, y, search_alt)
+    cmds.append(MissionItem(CommandType.WAYPOINT, target_search, "Descend to search altitude"))
+    add_search_waypoints(cmds, target_search, 4, 1, search_alt, 0.5, "Search for bag", True)
+    cmds.append(MissionItem(CommandType.PICKUP_PAYLOAD, 2, "Pickup Payload"))
+    cmds.append(MissionItem(CommandType.TAKEOFF, mission_alt, "Ascend to mission altitude"))
+    cmds.append(MissionItem(CommandType.WAYPOINT, home, "Fly to home"))
+    home_land = LocationGlobalRelative(launch_pos.lat, launch_pos.lon, search_alt)
+    cmds.append(MissionItem(CommandType.WAYPOINT, home_land, "Descend to search altitude"))
+    add_search_waypoints(cmds, home, 4, 1, search_alt, 0.5, "Search for safe landing", False)
+    cmds.append(MissionItem(CommandType.FINISH, launch_pos, "Finish"))
+
+    do_mission("Pickup Poop", cmds)
+
+def summon_mission(target):
+    x, y = target
+
+    mission_alt = 10    
+    search_alt = 4
+    log ("Starting summon mission")
+    
+    target = LocationGlobalRelative(x, y, mission_alt)
+    distxy = offboard_utils.distance_meters(vehicle, target)
+    dist = math.sqrt(pow(distxy[0], 2) + pow(distxy[1], 2))
+    log(f"Target is {dist}m  meters away\n")
+    if dist > 1000:
+        log("Target is too far away, aborting mission")
+        return
+
+    if not vehicle.is_armable:
+        log("Not armable, aborting mission")
+        return
+
+    if time.time() - last_frame_update > 1:
+        log("Camera frame not being updated")
+        return
+    
+    cmds = []
+    launch_pos = vehicle.location.global_relative_frame
+    cmds.append(MissionItem(CommandType.TAKEOFF, mission_alt, "Takeoff to mission altitude"))
+    home = LocationGlobalRelative(launch_pos.lat, launch_pos.lon, search_alt)
+    cmds.append(MissionItem(CommandType.WAYPOINT, home, "Start"))
+    cmds.append(MissionItem(CommandType.WAYPOINT, target, "Fly to target"))
+    target_search = LocationGlobalRelative(x, y, search_alt)
+    cmds.append(MissionItem(CommandType.WAYPOINT, target_search, "Descend to search altitude"))
+    add_search_waypoints(cmds, target_search, 4, 1, search_alt, 0.5, "Search for safe landing", False)
+    cmds.append(MissionItem(CommandType.FINISH, launch_pos, "Finish"))
+
+    do_mission("Go to Target", cmds)
+
+def bag_land_mission():
+    mission_alt = 10
+    search_alt = 4
+    log ("Starting land on bag mission")
+
+    if not vehicle.is_armable:
+        log("Not armable, aborting mission")
+        return
+
+    if time.time() - last_frame_update > 1:
+        log("Camera frame not being updated")
+        return
+
+    cmds = []
+    launch_pos = vehicle.location.global_relative_frame
+    cmds.append(MissionItem(CommandType.TAKEOFF, search_alt, "Takeoff to search altitude"))
+    home = LocationGlobalRelative(launch_pos.lat, launch_pos.lon, search_alt)
+    cmds.append(MissionItem(CommandType.WAYPOINT, home, "Start"))
+    target_search = LocationGlobalRelative(launch_pos.lat, launch_pos.lon, search_alt)
+    add_search_waypoints(cmds, target_search, 2, 2, search_alt, 0.5, "Search for bag", True)
+    cmds.append(MissionItem(CommandType.PICKUP_PAYLOAD, 2, "Takeoff with bag"))
+    cmds.append(MissionItem(CommandType.GRIPPER, False, "Release Gripper"))
+    cmds.append(MissionItem(CommandType.FINISH, target_search, "Finish"))
+
+    do_mission("Search for Bag", cmds)
+
+def start_safe_land():
+    global started_mission
+
+    vehicle.mode = VehicleMode("LOITER")
+    started_mission = False
+
+    search_alt = 4
+    log ("Starting safe land")
+
+    if not vehicle.is_armable:
+        log("Not armable, aborting mission")
+        return
+
+    if time.time() - last_frame_update > 1:
+        log("Camera frame not being updated")
+        return
+
+    cmds = []
+    launch_pos = vehicle.location.global_relative_frame
+    target_search = LocationGlobalRelative(launch_pos.lat, launch_pos.lon, search_alt)
+    cmds.append(MissionItem(CommandType.WAYPOINT, target_search, "Descend to search altitude"))
+    add_search_waypoints(cmds, target_search, 4, 1, search_alt, 0.5, "Search for safe landing", False)
+    cmds.append(MissionItem(CommandType.FINISH, launch_pos, "Finish"))
+
+    do_mission("Safe Land", cmds)
+
+def send_mission_status(name, start, item_start, total_items, item1, item2, item3):
+    msg = "Mission:\n"
+    msg += name + "\n"
+    msg += str(total_items) + "\n"
+    msg += start + "\n"
+    msg += item_start + "\n"
+    msg += item1 + "\n"
+    msg += item2 + "\n"
+    msg += item3 + "\n"
+    msg_pub.publish (msg)
+
+def get_item_title(items, index):
+    if index < len(items):
+        return items[index].title
+    return "-"
+
+def do_mission(mission_title, cmd_items):
+    global started_mission
+
+    if started_mission:
+        log("mission already running")
+        return
+
+    log("uploading mission...")
+    vehicle.commands.clear()
+    print (len(cmd_items))
+    for item in cmd_items:
+        item.add_commands(vehicle)
+    time.sleep(1)
+    vehicle.commands.upload()
+
+    for cmd in vehicle.commands:
+        print(cmd.x)
+
+    # pre-arm checks
+    vehicle.mode = VehicleMode("GUIDED")
+    time.sleep(1)
+    if not vehicle.is_armable or not vehicle.mode == VehicleMode("GUIDED"):
+        log("Can't switch to GUIDED, aborting mission")
+        return
+    
+    # attempt to arm
+    try:
+        vehicle.arm(True, 5)
+    except:
+        log("ARM FAILED, aborting mission")
+        return
+
+    log("ARMED SUCCESS!")
+
     time.sleep(5)
-    return
+
+    # official mission start
+    started_mission = True
+    c = datetime.now()
+    mission_start_time = c.strftime('%H:%M:%S')
+
+    total_items = len(cmd_items)
+    previous_command = -1
+    waypoint_start_time = time.time()
+    item_start_time = mission_start_time
+    current_mission_item = None
+    target_alt = 4
+    descending = False
+    has_payload = False
+    payload_expected = False
+    item_count = 1
+    pos_buff = []
+
+    while in_autonomous_mode() and len(cmd_items) > 0:
+        if vehicle.commands.next > previous_command or vehicle.commands.next == len(vehicle.commands):
+            #starting new waypoint
+            vehicle.mode = VehicleMode("GUIDED")
+
+            item_count += 1
+            current_mission_item = cmd_items.pop(0)
+            while current_mission_item.command != CommandType.WAYPOINT and current_mission_item.command != CommandType.SEARCH:
+                log("starting command " + str(current_mission_item.command))
+                item_start_time = datetime.now().strftime('%H:%M:%S')
+                send_mission_status(mission_title, mission_start_time, item_start_time, total_items, current_mission_item.title, get_item_title(cmd_items, 0), get_item_title(cmd_items, 1))
+
+                if current_mission_item.command == CommandType.TAKEOFF:
+
+                    vehicle.commands.clear()
+                    print ("uploading: " + str(len(cmd_items)))
+                    for item in cmd_items:
+                        item.add_commands(vehicle)
+                    time.sleep(1)
+                    vehicle.commands.upload()
+
+                    result = offboard_utils.takeoff(vehicle, current_mission_item.target)
+                    if not result:
+                        log("Takeoff failed, aborting mission")
+                        started_mission = False
+                        return
+                    
+                if current_mission_item.command == CommandType.PICKUP_PAYLOAD:
+                    if not payload_expected:
+                        log("Object wasn't found, aborting mission")
+                        started_mission = False
+                        vehicle.mode = VehicleMode("LAND")
+                        return
+
+                    attempts = 0
+                    while not has_payload and attempts < current_mission_item.target and in_autonomous_mode():
+                        log("Checking payload, will takeoff to 3m")
+                        result = offboard_utils.takeoff(vehicle, 3)
+                        if not result:
+                            log("Takeoff failed, aborting mission")
+                            started_mission = False
+                            return
+                        
+                        has_payload = check_for_payload()
+                        if not has_payload:
+                            log("Payload not detected")
+                            for i in range(5):
+                                if check_for_bag(down_frame) is not None:
+                                    success = land_on_object(rate)
+                                    break
+                        else:
+                            log("Payload Verified")
+
+                        attempts += 1
+                    
+                if current_mission_item.command == CommandType.GRIPPER:
+                    offboard_utils.set_gripper(vehicle, current_mission_item.target)
+
+                if current_mission_item.command == CommandType.FINISH:
+                    vehicle.mode = VehicleMode("LAND")
+                    log("Mission Completed")
+                    started_mission = False
+                    return
+
+                item_count += 1
+                if len(cmd_items) > 0:
+                    current_mission_item = cmd_items.pop(0)
+
+            item_start_time = datetime.now().strftime('%H:%M:%S')
+            send_mission_status(mission_title, mission_start_time, item_start_time, total_items, current_mission_item.title, get_item_title(cmd_items, 0), get_item_title(cmd_items, 1))
+
+            print("starting waypoint: " + str(vehicle.commands.next))
+            missionitem = vehicle.commands[vehicle.commands.next]
+            if missionitem.x == 0 or missionitem.y == 0:
+                missionitem = vehicle.commands[vehicle.commands.next + 1]
+
+            #turn to heading before continuing
+            lat = missionitem.x
+            lon = missionitem.y
+            alt = missionitem.z
+            target = LocationGlobalRelative(lat, lon, alt)
+            target_alt = alt
+            descending = alt < vehicle.location.global_relative_frame.alt
+
+            previous_command = vehicle.commands.next
+
+            if lat != 0 or lon != 0:
+                heading = offboard_utils.get_heading(vehicle, target)
+                offboard_utils.turn_towards(vehicle, heading, alt)
+                print("reached heading")
+                
+                waypoint_start_time = time.time()
+                vehicle.mode = VehicleMode("AUTO")
+                vehicle.airspeed = current_mission_item.speed
+                previous_command = vehicle.commands.next + 1
+
+        else:
+            if check_obstacles(1) and in_autonomous_mode():
+                #failsafe obstacle avoidance
+                log("Too close to obstacle!")
+                vehicle.mode = VehicleMode("GUIDED")
+                offboard_utils.send_velocity_for(vehicle, -0.5, 0, 0, 0.5)
+                vehicle.mode = VehicleMode("AUTO")
+
+            elif descending and check_downward_obs() != -1 and in_autonomous_mode():
+                #downward obstacle avoidance
+                t = datetime.now().strftime('%H:%M:%S')
+                send_mission_status(mission_title, mission_start_time, t, total_items, current_mission_item.title, "Downward Obstacle Detected", get_item_title(cmd_items, 0))
+                vehicle.mode = VehicleMode("GUIDED")
+                down_obs = check_downward_obs()
+                while down_obs != -1 and in_autonomous_mode():
+                    if down_obs == 0:
+                        offboard_utils.send_frame_velocity(vehicle, 0.5, 0, 0, 0)
+                    elif down_obs == 1:
+                        offboard_utils.send_frame_velocity(vehicle, 0, 0.5, 0, 0)
+                    elif down_obs == 2:
+                        offboard_utils.send_frame_velocity(vehicle, -0.5, 0, 0, 0)
+                    else:
+                        offboard_utils.send_frame_velocity(vehicle, 0, -0.5, 0, 0)
+                    time.sleep(0.5)
+                    down_obs = check_downward_obs()
+                    send_mission_status(mission_title, mission_start_time, item_start_time, total_items, current_mission_item.title, get_item_title(cmd_items, 0),  get_item_title(cmd_items, 1))
+                vehicle.mode = VehicleMode("AUTO")
+                
+            elif (vehicle.rangefinder.distance < target_alt - 2 or vehicle.rangefinder.distance < 1) and VehicleMode("AUTO") and in_autonomous_mode() \
+                  and vehicle.location.global_relative_frame.alt < 5 and not (current_mission_item.object_search and check_for_bag(down_frame) is not None) and vehicle.armed:
+                #failsafe low altitude
+                log("Correcting Altitude")
+                yaw = vehicle.attitude.yaw
+                vehicle.mode = VehicleMode("GUIDED")
+                while vehicle.rangefinder.distance < target_alt - 2 or (vehicle.rangefinder.distance < 1 and in_autonomous_mode() and vehicle.armed):
+                    offboard_utils.send_frame_velocity(vehicle, 0, 0, -0.5, yaw)
+                    time.sleep(0.5)
+                vehicle.mode = VehicleMode("AUTO")
+
+            elif current_mission_item != None and time.time() - waypoint_start_time > current_mission_item.timeout and current_mission_item.timeout != -1:
+                # waypoint probably unreachable
+                log("Waypoint timed out")
+                vehicle.commands.next = previous_command + 1
+
+            elif current_mission_item.land_search and check_safe_landing() and in_autonomous_mode():
+                #landing zone found
+                t = datetime.now().strftime('%H:%M:%S')
+                send_mission_status(mission_title, mission_start_time, t, total_items, current_mission_item.title, "Landing... ", get_item_title(cmd_items, 0))
+                vehicle.mode = VehicleMode("LAND")
+
+            elif current_mission_item.object_search and check_for_bag(down_frame) is not None and in_autonomous_mode():
+
+                #object detected
+                t = datetime.now().strftime('%H:%M:%S')
+                send_mission_status(mission_title, mission_start_time, t, total_items, current_mission_item.title, "Landing on Object", get_item_title(cmd_items, 0))
+                vehicle.mode = VehicleMode("GUIDED")
+                success = land_on_object(rate)
+
+                if not success:
+                    # return to searching
+                    if in_autonomous_mode():
+                        vehicle.mode = VehicleMode("AUTO")
+                else:
+                    # drone successfully landed
+                    payload_expected = True
+
+                    skipped = 0
+                    while len(cmd_items) > 0 and cmd_items[0].command == CommandType.SEARCH:
+                        cmd_items.pop(0)
+                        skipped += 2
+                    vehicle.commands.next = previous_command + skipped
+
+                item_start_time = datetime.now().strftime('%H:%M:%S')
+                
+
+        rate.sleep()
+
+    log("Mission Completed")
+    if in_autonomous_mode():
+        vehicle.mode = VehicleMode("GUIDED")
+
+    started_mission = False
 
 
-pos_buff = []
+def log(message):
+    print(message)
+    msg_pub.publish(message)
+
+offboard_utils.log = log
+
+def in_autonomous_mode():
+    return (vehicle.mode == VehicleMode("GUIDED") or vehicle.mode == VehicleMode("AUTO")) and not rospy.is_shutdown()
+
+
 def camera_callback (img):
     global down_frame
-    global pos_buff
     down_frame = bridge.imgmsg_to_cv2 (img)
-    """if vehicle is not None:
-        bag = get_bag_image_coords()
-        if bag is not None:
-            coord = bag[1]
-            print (math.degrees(vehicle.attitude.yaw))
-            local_coordinates = pixel_to_world(coord[0], coord[1], vehicle.rangefinder.distance)
-            world_coordinates = rotate_to_global((local_coordinates.x, local_coordinates.y))
-            pos_buff.append((world_coordinates[0], world_coordinates[1], vehicle.rangefinder.distance, vehicle.attitude.yaw, time.time()))
-            if len(pos_buff) > 6:
-                pos_buff.pop(0)
-            vel = estimate_velocity(pos_buff)
-            if vel is not None and (abs(vel[0]) > 0.1 or abs(vel[1]) > 0.1):
-                print(f"Velocity: {int(vel[0] * 1000) / 1000.0}, {int(vel[1] * 1000) / 1000.0}")"""
+    global last_frame_update
+    last_frame_update = time.time()
 
-
-def depth_callback(img):
+def down_depth_callback(img):
     global down_depth
     down_depth = bridge.imgmsg_to_cv2(img)
-    #check_safe_landing()
 
+def front_depth_callback(img):
+    global front_depth
+    front_depth = bridge.imgmsg_to_cv2(img)
 
 # Callback function for vehicle's 'armed' attribute
 def arm_callback(self, attr_name, value):
     state_pub.publish(value)
     print ("callback " + str(value))
 
-def world_to_pixel(world_pos):
-    _intrinsics = rs2.intrinsics()
-    _intrinsics.width = cameraInfo.width
-    _intrinsics.height = cameraInfo.height
-    _intrinsics.ppx = cameraInfo.K[2]
-    _intrinsics.ppy = cameraInfo.K[5]
-    _intrinsics.fx = cameraInfo.K[0]
-    _intrinsics.fy = cameraInfo.K[4]
-    #_intrinsics.model = cameraInfo.distortion_model
-    _intrinsics.model  = rs2.distortion.none  
-    _intrinsics.coeffs = [i for i in cameraInfo.D]
-
-    x, y = rs2.rs2_project_point_to_pixel(_intrinsics, (world_pos[0], world_pos[1], world_pos[2]))
-    return (x, y)
-
-def pixel_to_world(pixel_pos):
-    _intrinsics = rs2.intrinsics()
-    _intrinsics.width = cameraInfo.width
-    _intrinsics.height = cameraInfo.height
-    _intrinsics.ppx = cameraInfo.K[2]
-    _intrinsics.ppy = cameraInfo.K[5]
-    _intrinsics.fx = cameraInfo.K[0]
-    _intrinsics.fy = cameraInfo.K[4]
-    #_intrinsics.model = cameraInfo.distortion_model
-    _intrinsics.model  = rs2.distortion.none  
-    _intrinsics.coeffs = [i for i in cameraInfo.D]
-
-    x, y, z = rs2.rs2_deproject_pixel_to_point(_intrinsics, (pixel_pos[0], pixel_pos[1]), pixel_pos[2])
-    return (x, y)
-
 def recieve_camera_info(msg):
     global cameraInfo
-    cameraInfo = msg
+    cameraInfo = msg   
 
-def do_misson():
-    cmds = vehicle.commands
-    cmds.clear()
-    cmd2=Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 3, 0, 0, 0, 29.970872, -95.637599, 3)
-    cmd3=Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 3, 0, 0, 0, 29.970750, -95.637597, 3)
-    cmd4=Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 3, 0, 0, 0, 29.970872, -95.637599, 3)
-    cmd5=Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 3, 0, 0, 0, 29.970750, -95.637597, 3)
-    cmd6=Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 3, 0, 0, 0, 29.970872, -95.637599, 3)
-    cmd7=Command( 0, 0, 0, mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT, mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 0, 0, 3, 0, 0, 0, 29.970750, -95.637597, 3)
-    cmds.add(cmd2)
-    cmds.add(cmd3)
-    cmds.add(cmd4)
-    cmds.add(cmd5)
-    cmds.add(cmd6)
-    cmds.add(cmd7)
-    vehicle.airspeed = 0.5
-    vehicle.groundspeed = 0.5
-    print("uploading...")
-    cmds.upload() # Send commands
+def command_callback(command):
+    command_str = command.data
+    args = command_str.split()
+    if args[0] == "Pickup":
+        bag_mission((float(args[1]), float(args[2])))
+    elif args[0] == "Search":
+        bag_land_mission()
+    elif args[0] == "Summon":
+        summon_mission((float(args[1]), float(args[2])))
+    elif args[0] == "Gripper":
+        offboard_utils.set_gripper(vehicle, not offboard_utils.get_gripper_status())
+    elif args[0] == "SafeLand":
+        test_vel_mission()
+    elif args[0] == "Reboot":
+        vehicle.reboot()
+    else:
+        log("Invalid command: " + command_str)
 
-    takeoff(2)
-    vehicle.simple_goto(vehicle.location.global_relative_frame)
-
-    vehicle.mode = VehicleMode("AUTO")
-    if vehicle.mode != VehicleMode("AUTO"):
-        print("failed to switch to auto")
+    #TODO: safe land, safe RTL
     
 def start_node():
-    global object_detector
-    object_detector = BlobDetection()
-    print ("model loaded")
-
-    rospy.Subscriber('/down/color/image_raw', Image, camera_callback, queue_size=1)
-    rospy.Subscriber('/down/depth/image_rect_raw', Image, depth_callback, queue_size=1)
-    rospy.Subscriber('/front/color/camera_info', CameraInfo, recieve_camera_info)
-    global state_pub
-    state_pub = rospy.Publisher('is_armed', Bool, queue_size=1)
 
     global bridge
     bridge = CvBridge()
 
+    rospy.Subscriber('/down/color/image_raw', Image, camera_callback, queue_size=1)
+    rospy.Subscriber('/down/depth/image_rect_raw', Image, down_depth_callback, queue_size=1)
+    rospy.Subscriber('/front/color/camera_info', CameraInfo, recieve_camera_info)
+    rospy.Subscriber('/front/depth/image_rect_raw', Image, front_depth_callback, queue_size=1)
+    rospy.Subscriber('target_coordinates', Point, bag_mission)
+    rospy.Subscriber("commands", String, command_callback)
+    global state_pub
+    state_pub = rospy.Publisher('is_armed', Bool, queue_size=1)
+    global msg_pub
+    msg_pub = rospy.Publisher('messages', String, queue_size=5)
+
+    global rate
     rate = rospy.Rate(20)
+
+    print ("waiting for rospy...")
 
     # Wait for rospy
     while rospy.is_shutdown():
         rate.sleep()
+
+    print ("connecting to vehicle...")
 
     global vehicle
     vehicle = connect('127.0.0.1:14540', baud=921600, wait_ready=True)
@@ -451,28 +791,12 @@ def start_node():
     # Add arm_callback as a listener for 'armed' attribute changes
     vehicle.add_attribute_listener('armed', arm_callback)
 
-    print("connected")
+    log("offboard node connected")
 
-    print ("Basic pre-arm checks")
-    # Don't try to arm until autopilot is ready
-    while not vehicle.is_armable:
-        print ("Waiting for vehicle to initialise...")
-        time.sleep(1)
+    offboard_utils.set_gripper(vehicle, True)
 
-    launch_position = vehicle.location.global_relative_frame
-    set_gripper(True)
-
-    while not rospy.is_shutdown():
-        
-        if not vehicle.armed or not vehicle.mode == VehicleMode("GUIDED"):
-            print ("Waiting for arming... ")
-            mission_started = False
-            time.sleep(1)
-        elif not mission_started:
-            mission_started = True
-            do_misson()
-        
-        rate.sleep()
+    #mission started with tcp message
+    rospy.spin()
 
 if __name__ == "__main__":
     rospy.init_node("offboard_node")

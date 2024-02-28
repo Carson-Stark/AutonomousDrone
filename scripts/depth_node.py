@@ -72,9 +72,9 @@ DEPTH_HEIGHT = 480               # Defines the number of lines for each frame or
 COLOR_WIDTH  = 640
 COLOR_HEIGHT = 480
 FPS          = 30
-DEPTH_RANGE_M = [0.1, 8.0]       # Replace with your sensor's specifics, in meter
+DEPTH_RANGE_M = [0.1, 6.0]       # Replace with your sensor's specifics, in meter
 
-obstacle_line_height_ratio = 0.35  # [0-1]: 0-Top, 1-Bottom. The height of the horizontal line to find distance to obstacle.
+obstacle_line_height_ratio = 0.45  # [0-1]: 0-Top, 1-Bottom. The height of the horizontal line to find distance to obstacle.
 obstacle_line_thickness_pixel = 10 # [1-DEPTH_HEIGHT]: Number of pixel rows to use to generate the obstacle distance message. For each column, the scan will return the minimum value for those pixels centered vertically in the image.
 
 USE_PRESET_FILE = True
@@ -254,7 +254,7 @@ def send_distance_sensor_message():
 def send_msg_to_gcs(text_to_be_sent):
     # MAV_SEVERITY: 0=EMERGENCY 1=ALERT 2=CRITICAL 3=ERROR, 4=WARNING, 5=NOTICE, 6=INFO, 7=DEBUG, 8=ENUM_END
     text_msg = 'D4xx: ' + text_to_be_sent
-    conn.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, text_msg.encode())
+    #conn.mav.statustext_send(mavutil.mavlink.MAV_SEVERITY_INFO, text_msg.encode())
     progress("INFO: %s" % text_to_be_sent)
 
 # Request a timesync update from the flight controller, for future work.
@@ -373,25 +373,29 @@ def distances_from_depth_image(obstacle_line_height, depth_mat, distances, min_d
         #  [ ] -> ignored
         #   ^ One of [distances_array_length] number of columns, from left to right in the image
         center_pixel = obstacle_line_height
-        upper_pixel = center_pixel + obstacle_line_thickness_pixel / 2
-        lower_pixel = center_pixel - obstacle_line_thickness_pixel / 2
+        upper_pixel = center_pixel + 50
+        lower_pixel = center_pixel - 50
 
         # Sanity checks
-        if upper_pixel > depth_img_height:
-            upper_pixel = depth_img_height
-        elif upper_pixel < 1:
-            upper_pixel = 1
-        if lower_pixel > depth_img_height:
-            lower_pixel = depth_img_height - 1
+        if upper_pixel > depth_img_height - 10:
+            upper_pixel = depth_img_height - 10
+        elif upper_pixel < 10:
+            upper_pixel = 10
+        if lower_pixel > depth_img_height - 10:
+            lower_pixel = depth_img_height - 10
         elif lower_pixel < 0:
             lower_pixel = 0
 
         # Converting depth from uint16_t unit to metric unit. depth_scale is usually 1mm following ROS convention.
-        # dist_m = depth_mat[int(obstacle_line_height), int(i * step)] * depth_scale
-        min_point_in_scan = np.min(depth_mat[int(lower_pixel):int(upper_pixel), int(i * step)])
-        dist_m = min_point_in_scan * depth_scale
+        
+        top = depth_mat[int(lower_pixel), int(i * step)] * depth_scale
+        middle = depth_mat[int(obstacle_line_height), int(i * step)] * depth_scale
+        bottom = depth_mat[int(upper_pixel), int(i * step)] * depth_scale
+        dist_m = max([top, middle, bottom])
+        #min_point_in_scan = np.min(depth_mat[int(lower_pixel):int(upper_pixel), int(i * step)])
+        #dist_m = min_point_in_scan * depth_scale
 
-        if dist_m < min_dist and dist_m > 0:
+        if dist_m < min_dist and dist_m > min_depth_m and dist_m < max_depth_m:
             min_dist = dist_m
 
 
@@ -404,7 +408,7 @@ def distances_from_depth_image(obstacle_line_height, depth_mat, distances, min_d
         if dist_m > min_depth_m and dist_m < max_depth_m:
             distances[i] = dist_m * 100
 
-    print(str(min_dist))
+    print(min_dist)
 
 
 ######################################################
@@ -492,7 +496,7 @@ def get_depth(depth_msg):
     depth_mat = np.asanyarray(depth_frame)
 
     # Create obstacle distance data from depth image
-    obstacle_line_height = find_obstacle_line_height()
+    obstacle_line_height = DEPTH_HEIGHT #find_obstacle_line_height()
     distances_from_depth_image(obstacle_line_height, depth_mat, distances, DEPTH_RANGE_M[0], DEPTH_RANGE_M[1], obstacle_line_thickness_pixel)
 
     if debug_enable == 1:
@@ -504,6 +508,8 @@ def get_depth(depth_msg):
         x2, y2 = int(DEPTH_WIDTH), int(obstacle_line_height)
         line_thickness = obstacle_line_thickness_pixel
         cv2.line(display_image, (x1, y1), (x2, y2), (0, 255, 0), thickness=line_thickness)
+        cv2.line(display_image, (x1, y1 + 50), (x2, y2 + 50), (0, 255, 0), thickness=line_thickness)
+        cv2.line(display_image, (x1, y1 - 50), (x2, y2 - 50), (0, 255, 0), thickness=line_thickness)
 
         # Put the fps in the corner of the image
         processing_speed = 1 / (time.time() - last_time)
@@ -529,7 +535,7 @@ def get_depth(depth_msg):
 
 def start_node():
 
-    progress("INFO: Starting Vehicle communications")
+    """progress("INFO: Starting Vehicle communications")
     global conn
     conn = mavutil.mavlink_connection(
         connection_string,
@@ -545,7 +551,7 @@ def start_node():
     mavlink_thread = threading.Thread(target=mavlink_loop, args=(conn, mavlink_callbacks))
     mavlink_thread.start()
 
-    conn.wait_heartbeat()
+    conn.wait_heartbeat()"""
 
     # connecting and configuring the camera is a little hit-and-miss.
     # Start a timer and rely on a restart of the script to get it working.
@@ -599,6 +605,8 @@ def start_node():
     front_sub = rospy.Subscriber('/front/depth/image_rect_raw', Image, queue_size=1, callback=get_depth)
     rospy.Subscriber('front/depth/camera_info', CameraInfo, callback=get_intrinsics)
     bridge = CvBridge()
+
+    rospy.spin()
 
 if __name__ == '__main__':
     rospy.init_node('camera_node', anonymous=True)
