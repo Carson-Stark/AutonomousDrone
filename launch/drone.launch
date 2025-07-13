@@ -1,0 +1,10 @@
+<launch>
+    <node name='start_telemetry_fowarding' pkg="drone" type="start_telemetry_fowarding.sh" output='screen'/>
+    <node pkg='drone' type='camera_node.py' name='camera_node' output='screen'></node>
+    <!-- <node pkg='drone' type='video_stream_node.py' name='video_stream_node' output='screen'></node> -->
+    <node pkg='drone' type='offboard_node.py' name='offboard_node' output='screen'></node>
+    <node name='start_cameras' pkg="drone" type="start_cameras.sh" output='screen'/>
+    <node pkg='drone' type='depth_node.py' name='depth_node' output='screen'></node>
+    <node pkg='drone' type='tcp_server.py' name='tcp_server' output='screen'></node>
+    <!-- <node name="record" pkg="rosbag" type="record" args="-a -o $(find drone)/rosbags/"/> -->
+</launch>

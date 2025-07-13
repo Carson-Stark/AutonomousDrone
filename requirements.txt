@@ -1,0 +1,13 @@
+numpy
+Pillow
+opencv-python
+tflite-runtime
+pycoral
+rospkg
+dronekit
+apscheduler
+pymavlink
+cv_bridge
+rospy
+PyGObject
+pyrealsense2

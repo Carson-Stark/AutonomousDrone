@@ -1,0 +1,1 @@
+mavproxy.py --master /dev/your_serial_device --baudrate 921600 --out 127.0.0.1:14540 --out 127.0.0.1:14541 --out <IP_ADDRESS_1>:14550 --out <IP_ADDRESS_2>:14551

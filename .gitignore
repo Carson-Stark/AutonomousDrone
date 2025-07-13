@@ -1,0 +1,50 @@
+# Ignore image files
+*.png
+# Ignore video files
+*.mp4
+# Ignore ONNX model files
+*.onnx
+
+# Ignore build and development environment directories
+/devel/
+/build/
+/install/
+
+# Ignore log files and temporary files
+*.log
+*.tmp
+*.temp
+
+# Ignore Python cache files if any Python scripts are present
+__pycache__/
+*.py[cod]
+
+# Ignore shell script history and environment files
+*.sh~
+*.env
+
+# Ignore editor-specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore telemetry and log files related to drone
+scripts/mav.tlog
+scripts/mav.tlog.raw
+
+# Ignore compiled binaries or executables if any
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Ignore coverage reports
+coverage/
+*.lcov
+
+# Ignore node_modules if any Node.js dependencies are present
+node_modules/
+
+# Ignore any other large or sensitive files you want to exclude
+# Add more patterns as needed
