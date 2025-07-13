@@ -67,12 +67,16 @@ Ensure you have the following prerequisites installed and configured before proc
   ```bash
   pip3 install tflite-runtime
   ```
+
 - Coral Edge TPU device attached for hardware-accelerated object detection.
+
 - Edge TPU runtime installed (libedgetpu). Follow the official Coral setup guide: https://coral.ai/docs/setup/
+
 - PyCoral Python library installed for interfacing with the Edge TPU:
   ```bash
   pip3 install pycoral
   ```
+
 - Other dependencies listed in `package.xml` and `requirements.txt` (will be installed in later steps)
 
 ### Software Setup
