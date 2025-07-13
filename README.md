@@ -1,5 +1,7 @@
 # Autonomous Drone Project
 
+<img width="1920" height="1080" alt="1" src="https://github.com/user-attachments/assets/b5b19692-d7d6-4e2d-8c27-31f25cdca4c1" />
+
 ## Project Overview
 
 This project implements an autonomous drone system integrating robotics, computer vision, and machine learning technologies. It features obstacle avoidance, precision landing using custom visual servoing, object detection deployed on edge devices, and payload verification with depth sensing. The system supports cellular connectivity for extended operational range and includes a custom mobile app for remote monitoring and mission control. Core hardware includes Jetson Nano and Pixhawk autopilot, with software components built on ROS, DroneKit, and TensorFlow Lite.
@@ -24,7 +26,9 @@ This project implements an autonomous drone system integrating robotics, compute
 
 ### YouTube Video
 
-#### Can I Build a TikTok Clone in 24 Hours?
+*Follow the complete development journey from start to finish*
+
+#### I Spent Two Years Building and Autonomous Drone...
 [![Can I Build a TikTok Clone in 24 Hours?](https://img.youtube.com/vi/B96JGoWQOsE/0.jpg)](https://www.youtube.com/watch?v=B96JGoWQOsE)
 
 ## Flight Platform
@@ -44,7 +48,7 @@ This project implements an autonomous drone system integrating robotics, compute
 ### Software
 - **ArduPilot Firmware (ArduCopter)**: Used after switching from PX4 for greater reliability and ease of integration
 - **DroneKit-Python SDK**: Used for high-level drone control and automation sequences
-- **ROS1**: coordinated communication between various python nodes running simultaneously, originally used for mavros and Gazebo with PX4
+- **ROS Melodic**: coordinated communication between various python nodes running simultaneously, originally used for mavros and Gazebo with PX4
 - **OpenCV**: Powered all computer vision algorithms, from depth map generation to custom image-based target tracking
 - **TF-Lite**: Trained EfficientDet-Lite model on a custom dataset collected from actual drone footage, optimized for aerial bag detection with Coral TPU acceleration
 
