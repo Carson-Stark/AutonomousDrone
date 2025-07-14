@@ -6,6 +6,8 @@
 
 This project implements an autonomous drone system integrating robotics, computer vision, and machine learning technologies. It features obstacle avoidance, precision landing using custom visual servoing, object detection deployed on edge devices, and payload verification with depth sensing. The system supports cellular connectivity for extended operational range and includes a custom mobile app for remote monitoring and mission control. Core hardware includes Jetson Nano and Pixhawk autopilot, with software components built on ROS, DroneKit, and TensorFlow Lite.
 
+> See [this repo](https://github.com/Carson-Stark/DroneMobileApp) for the companion mobile app
+
 ### Features
 
 - Forward and downward obstacle avoidance and obstacle-aware path planning
