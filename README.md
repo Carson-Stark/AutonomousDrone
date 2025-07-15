@@ -22,9 +22,8 @@ This project implements an autonomous drone system integrating robotics, compute
 
 ### Project Timeline
 
-**Started:** December 2022
-
-**Completed:** December 2024
+- **Started:** December 2022
+- **Completed:** December 2024
 
 ### YouTube Video
 
