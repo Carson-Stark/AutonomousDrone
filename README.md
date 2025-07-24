@@ -36,15 +36,19 @@ This project implements an autonomous drone system integrating robotics, compute
 
 ### Hardware
 
-- **Standard S500 Hexacopter Frame** with 3D-printed mounts for companion computer and sensors
-- **Pixhawk Flight Controller** for low-level stabilization, GPS navigation, and built-in flight functions like return-to-home and loiter, connected to companion computer via serial
-- **Jetson Nano** companion computer for autonomous decision making
-- **Coral TPU** for realtime object detection inference
-- **6x Brushless Motors + ESCs** (T-Motor)
-- **Intel RealSense Depth Cameras** (forward-facing for obstacle detection, downward-facing for landing validation)
-- **4G LTE Modem** for remote connectivity and telemetry streaming
+- [**Standard S500 Hexacopter Frame**](https://amzn.to/4mbMCGy) with 3D-printed mounts for companion computer and sensors
+- [**Pixhawk Flight Controller**](https://amzn.to/3GJAZaW) for low-level stabilization, GPS navigation, and built-in flight functions like return-to-home and loiter, connected to companion computer via serial
+- [**Jetson Nano**](https://amzn.to/4lKC01v) companion computer for autonomous decision making
+- [**Coral TPU**](https://coral.ai/products/accelerator/) for realtime object detection inference
+- **6x Brushless Motors + ESCs**
+  - [TMotor Antigravity](https://store.tmotor.com/product/mn2806-motor-antigravity-type.html) (high end)
+  - [TMotor ESC](https://store.tmotor.com/product/air-20a-4s-esc.html) (high end)
+  - [QWinOut Motors](https://amzn.to/4o5Y7kw)
+  - [QWinOut Escs](https://amzn.to/46WCvAX)
+- [**Intel RealSense Depth Cameras**](https://amzn.to/4f7xAiS) (forward-facing for obstacle detection, downward-facing for landing validation)
+- [**4G LTE Modem**](https://amzn.to/471Q16r) for remote connectivity and telemetry streaming
 - **3D-printed Gripper Mechanism** powered by servo for bag pickup
-- **9000mAh Lipo Battery** powered all onboard electronics including the companion computer (with voltage regulator), provided 10+ minutes of flight time
+- [**9000mAh Lipo Battery**](https://amzn.to/4kSgqqz) powered all onboard electronics including the companion computer (with voltage regulator), provided 10+ minutes of flight time
 
 ### Software
 - **ArduPilot Firmware (ArduCopter)**: Used after switching from PX4 for greater reliability and ease of integration
